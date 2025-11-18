@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU Sprite Sheet Demo</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: monospace;
+      background: #222;
+      color: #fff;
+    }
+    canvas {
+      border: 2px solid #444;
+      background: #000;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    .controls {
+      margin: 20px 0;
+    }
+    .info {
+      margin-top: 10px;
+      font-size: 14px;
+    }
+    button {
+      padding: 8px 16px;
+      margin-right: 10px;
+      background: #444;
+      color: #fff;
+      border: 1px solid #666;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #555;
+    }
+  </style>
+</head>
+<body>
+  <h1>WebGPU Sprite Rendering Demo</h1>
+  <canvas id="canvas" width="800" height="600"></canvas>
+  
+  <div class="controls">
+    <button id="toggle">Start Animation</button>
+    <button id="addSprites">Add 100 Sprites</button>
+    <button id="reset">Reset</button>
+  </div>
+  
+  <div class="info">
+    <div>Sprites: <span id="spriteCount">1</span></div>
+    <div>FPS: <span id="fps">0</span></div>
+    <div>Frame Time: <span id="frameTime">0</span>ms</div>
+  </div>
+
+  <script type="module">
+    const canvas = document.getElementById('canvas');
+    const toggleBtn = document.getElementById('toggle');
+    const addSpritesBtn = document.getElementById('addSprites');
+    const resetBtn = document.getElementById('reset');
+    const spriteCountEl = document.getElementById('spriteCount');
+    const fpsEl = document.getElementById('fps');
+    const frameTimeEl = document.getElementById('frameTime');
+
+    // WebGPU initialization
+    if (!navigator.gpu) {
+      alert('WebGPU not supported. Use Chrome/Edge 113+ or Safari 18+');
+      throw new Error('WebGPU not supported');
+    }
+
+    const adapter = await navigator.gpu.requestAdapter();
+    const device = await adapter.requestDevice();
+    const context = canvas.getContext('webgpu');
+    const format = navigator.gpu.getPreferredCanvasFormat();
+    
+    context.configure({
+      device,
+      format,
+      alphaMode: 'premultiplied',
+    });
+
+    // Load sprite sheet texture
+    const img = new Image();
+    img.src = '../64.png';
+    await img.decode();
+
+    // Create texture from image
+    const texture = device.createTexture({
+      size: [img.width, img.height, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+
+    device.queue.copyExternalImageToTexture(
+      { source: img },
+      { texture: texture },
+      [img.width, img.height]
+    );
+
+    // Create sampler
+    const sampler = device.createSampler({
+      magFilter: 'nearest',
+      minFilter: 'nearest',
+    });
+
+    // Vertex shader (WGSL)
+    const vertexShaderCode = `
+      struct VertexInput {
+        @location(0) position: vec2f,
+        @location(1) texCoord: vec2f,
+        @location(2) instancePos: vec2f,
+        @location(3) instanceFrame: f32,
+      }
+
+      struct VertexOutput {
+        @builtin(position) position: vec4f,
+        @location(0) texCoord: vec2f,
+        @location(1) frame: f32,
+      }
+
+      struct Uniforms {
+        resolution: vec2f,
+        spriteSize: vec2f,
+        sheetSize: vec2f,
+        framesPerRow: f32,
+        totalFrames: f32,
+      }
+
+      @group(0) @binding(2) var<uniform> uniforms: Uniforms;
+
+      @vertex
+      fn vertexMain(input: VertexInput) -> VertexOutput {
+        var output: VertexOutput;
+        
+        // Calculate position in clip space
+        let spritePos = input.instancePos + input.position * uniforms.spriteSize;
+        let clipPos = (spritePos / uniforms.resolution) * 2.0 - 1.0;
+        output.position = vec4f(clipPos.x, -clipPos.y, 0.0, 1.0);
+        
+        output.texCoord = input.texCoord;
+        output.frame = input.instanceFrame;
+        
+        return output;
+      }
+    `;
+
+    // Fragment shader (WGSL) - samples texture based on frame
+    const fragmentShaderCode = `
+      @group(0) @binding(0) var textureSampler: sampler;
+      @group(0) @binding(1) var textureData: texture_2d<f32>;
+
+      struct Uniforms {
+        resolution: vec2f,
+        spriteSize: vec2f,
+        sheetSize: vec2f,
+        framesPerRow: f32,
+        totalFrames: f32,
+      }
+
+      @group(0) @binding(2) var<uniform> uniforms: Uniforms;
+
+      @fragment
+      fn fragmentMain(
+        @location(0) texCoord: vec2f,
+        @location(1) frame: f32
+      ) -> @location(0) vec4f {
+        // Calculate which frame to display from sprite sheet
+        let frameIndex = u32(frame) % u32(uniforms.totalFrames);
+        let row = f32(frameIndex) / uniforms.framesPerRow;
+        let col = f32(frameIndex % u32(uniforms.framesPerRow));
+        
+        // Calculate UV offset for this frame
+        let frameSizeUV = uniforms.spriteSize / uniforms.sheetSize;
+        let frameOffset = vec2f(col, floor(row)) * frameSizeUV;
+        let uv = frameOffset + texCoord * frameSizeUV;
+        
+        let color = textureSample(textureData, textureSampler, uv);
+        
+        // Discard transparent pixels
+        if (color.a < 0.1) {
+          discard;
+        }
+        
+        return color;
+      }
+    `;
+
+    // Create shader modules
+    const vertexShader = device.createShaderModule({ code: vertexShaderCode });
+    const fragmentShader = device.createShaderModule({ code: fragmentShaderCode });
+
+    // Quad vertices (position + texCoord)
+    const vertices = new Float32Array([
+      // x,    y,    u,   v
+      0.0,  0.0,  0.0, 0.0,  // top-left
+      64.0, 0.0,  1.0, 0.0,  // top-right
+      0.0,  64.0, 0.0, 1.0,  // bottom-left
+      64.0, 64.0, 1.0, 1.0,  // bottom-right
+    ]);
+
+    const vertexBuffer = device.createBuffer({
+      size: vertices.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(vertexBuffer, 0, vertices);
+
+    // Instance data: position (x, y) and frame index
+    let sprites = [
+      { x: 100, y: 100, frame: 0, vx: 2, vy: 1.5 }
+    ];
+
+    function createInstanceBuffer() {
+      const instanceData = new Float32Array(sprites.length * 3);
+      sprites.forEach((sprite, i) => {
+        instanceData[i * 3 + 0] = sprite.x;
+        instanceData[i * 3 + 1] = sprite.y;
+        instanceData[i * 3 + 2] = sprite.frame;
+      });
+
+      const buffer = device.createBuffer({
+        size: instanceData.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(buffer, 0, instanceData);
+      return buffer;
+    }
+
+    let instanceBuffer = createInstanceBuffer();
+
+    // Uniforms: resolution, sprite size, sheet size, frames
+    const uniformData = new Float32Array([
+      canvas.width, canvas.height,  // resolution
+      64.0, 64.0,                    // sprite size
+      img.width, img.height,         // sheet size
+      8.0,                           // frames per row
+      60.0,                          // total frames (8x8 grid = 64, adjust if needed)
+    ]);
+
+    const uniformBuffer = device.createBuffer({
+      size: uniformData.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+    // Bind group layout
+    const bindGroupLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 2, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+
+    const bindGroup = device.createBindGroup({
+      layout: bindGroupLayout,
+      entries: [
+        { binding: 0, resource: sampler },
+        { binding: 1, resource: texture.createView() },
+        { binding: 2, resource: { buffer: uniformBuffer } },
+      ],
+    });
+
+    // Pipeline
+    const pipelineLayout = device.createPipelineLayout({
+      bindGroupLayouts: [bindGroupLayout],
+    });
+
+    const pipeline = device.createRenderPipeline({
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexShader,
+        entryPoint: 'vertexMain',
+        buffers: [
+          {
+            arrayStride: 16, // 4 floats * 4 bytes
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: 'float32x2' },  // position
+              { shaderLocation: 1, offset: 8, format: 'float32x2' },  // texCoord
+            ],
+          },
+          {
+            arrayStride: 12, // 3 floats * 4 bytes
+            stepMode: 'instance',
+            attributes: [
+              { shaderLocation: 2, offset: 0, format: 'float32x2' },  // instance position
+              { shaderLocation: 3, offset: 8, format: 'float32' },    // instance frame
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: fragmentShader,
+        entryPoint: 'fragmentMain',
+        targets: [{ format }],
+      },
+      primitive: {
+        topology: 'triangle-strip',
+      },
+    });
+
+    // Animation state
+    let isAnimating = false;
+    let lastTime = performance.now();
+    let frameCount = 0;
+    let lastFpsUpdate = lastTime;
+
+    function updateSprites(deltaTime) {
+      sprites.forEach(sprite => {
+        sprite.x += sprite.vx;
+        sprite.y += sprite.vy;
+
+        // Bounce off walls
+        if (sprite.x <= 0 || sprite.x >= canvas.width - 64) sprite.vx *= -1;
+        if (sprite.y <= 0 || sprite.y >= canvas.height - 64) sprite.vy *= -1;
+
+        // Animate frame (60 frames, cycle through)
+        sprite.frame = (sprite.frame + 0.3) % 60;
+      });
+
+      // Update instance buffer
+      const instanceData = new Float32Array(sprites.length * 3);
+      sprites.forEach((sprite, i) => {
+        instanceData[i * 3 + 0] = sprite.x;
+        instanceData[i * 3 + 1] = sprite.y;
+        instanceData[i * 3 + 2] = Math.floor(sprite.frame);
+      });
+      device.queue.writeBuffer(instanceBuffer, 0, instanceData);
+    }
+
+    function render() {
+      const now = performance.now();
+      const deltaTime = now - lastTime;
+      lastTime = now;
+
+      if (isAnimating) {
+        updateSprites(deltaTime);
+      }
+
+      // FPS counter
+      frameCount++;
+      if (now - lastFpsUpdate >= 1000) {
+        fpsEl.textContent = frameCount;
+        frameTimeEl.textContent = (deltaTime).toFixed(2);
+        frameCount = 0;
+        lastFpsUpdate = now;
+      }
+
+      const commandEncoder = device.createCommandEncoder();
+      const textureView = context.getCurrentTexture().createView();
+
+      const renderPass = commandEncoder.beginRenderPass({
+        colorAttachments: [{
+          view: textureView,
+          clearValue: { r: 0.1, g: 0.1, b: 0.1, a: 1.0 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        }],
+      });
+
+      renderPass.setPipeline(pipeline);
+      renderPass.setVertexBuffer(0, vertexBuffer);
+      renderPass.setVertexBuffer(1, instanceBuffer);
+      renderPass.setBindGroup(0, bindGroup);
+      renderPass.draw(4, sprites.length); // 4 vertices, N instances
+      renderPass.end();
+
+      device.queue.submit([commandEncoder.finish()]);
+      requestAnimationFrame(render);
+    }
+
+    // Controls
+    toggleBtn.addEventListener('click', () => {
+      isAnimating = !isAnimating;
+      toggleBtn.textContent = isAnimating ? 'Stop Animation' : 'Start Animation';
+    });
+
+    addSpritesBtn.addEventListener('click', () => {
+      for (let i = 0; i < 100; i++) {
+        sprites.push({
+          x: Math.random() * (canvas.width - 64),
+          y: Math.random() * (canvas.height - 64),
+          frame: Math.random() * 60,
+          vx: (Math.random() - 0.5) * 4,
+          vy: (Math.random() - 0.5) * 4,
+        });
+      }
+      instanceBuffer = createInstanceBuffer();
+      spriteCountEl.textContent = sprites.length;
+    });
+
+    resetBtn.addEventListener('click', () => {
+      sprites = [{ x: 100, y: 100, frame: 0, vx: 2, vy: 1.5 }];
+      instanceBuffer = createInstanceBuffer();
+      spriteCountEl.textContent = sprites.length;
+    });
+
+    spriteCountEl.textContent = sprites.length;
+    render();
+  </script>
+</body>
+</html>
