@@ -4,10 +4,11 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "marp:watch": "marp -w slides/deck.md --html --allow-local-files --output dist/deck.html",
-    "marp:build": "marp slides/deck.md --html --allow-local-files --output dist/deck.html",
-    "marp:pdf": "marp slides/deck.md --pdf --output dist/deck.pdf",
-    "marp:pptx": "marp slides/deck.md --pptx --output dist/deck.pptx"
+    "assets:prepare": "mkdir -p dist && cp slides/uofs-logo.png dist/uofs-logo.png",
+    "marp:watch": "npm run assets:prepare && marp -w slides/deck.md --html --allow-local-files --theme-set slides/theme.css --output dist/deck.html",
+    "marp:build": "npm run assets:prepare && marp slides/deck.md --html --allow-local-files --theme-set slides/theme.css --output dist/deck.html",
+    "marp:pdf": "npm run assets:prepare && marp slides/deck.md --pdf --allow-local-files --theme-set slides/theme.css --output dist/deck.pdf",
+    "marp:pptx": "npm run assets:prepare && marp slides/deck.md --pptx --allow-local-files --theme-set slides/theme.css --output dist/deck.pptx"
   },
   "keywords": [],
   "author": "",
