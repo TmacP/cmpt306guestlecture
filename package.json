@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "assets:prepare": "mkdir -p dist && cp slides/uofs-logo.png dist/uofs-logo.png && cp slides/godot_architecture.png dist/godot_architecture.png && rm -rf dist/scripts && cp -R slides/scripts dist/",
+    "assets:prepare": "mkdir -p dist && cp slides/uofs-logo.png dist/uofs-logo.png && cp slides/godot_architecture.png dist/godot_architecture.png",
     "marp:watch": "npm run assets:prepare && marp -w slides/deck.md --html --allow-local-files --theme-set slides/theme.css --output dist/deck.html",
     "marp:build": "npm run assets:prepare && marp slides/deck.md --html --allow-local-files --theme-set slides/theme.css --output dist/deck.html",
     "marp:pdf": "npm run assets:prepare && marp slides/deck.md --pdf --allow-local-files --theme-set slides/theme.css --output dist/deck.pdf",
