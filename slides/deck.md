@@ -13,44 +13,63 @@ footer: "Graphics and Shaders"
 ### Guest Lecturer Tristen MacPherson
 
 ---
-## High level
+## High level overview
 - CPU prepares the work
 - CPU sends commands, code (shaders), and data through a graphics API
 - GPU processes this data in parallel
 - GPU renders the results
 
 ---
-## CPU Preparation
-CPU sets up the work for the GPU (Graphics Processing Unit). This involves tasks like loading assets (textures, shaders, models), configuring data, and preparing instructions that the GPU will execute.
+## CPU Preparation for the GPU 
+- loading assets (textures, shaders, models)
+- configuring data
+- preparing instructions
 
 ---
 ## Command Buffer & API Calls
-The CPU uses a graphics API (like OpenGL, Vulkan, DirectX, or Metal) to communicate with the GPU. These APIs allow the CPU to send commands to the GPU, such as rendering instructions or memory allocations. These commands are stored in a command buffer, which acts as a queue for the GPU.
+- CPU uses a graphics API (like OpenGL, Vulkan, DirectX, or Metal) to communicate with the GPU. 
+- These APIs allow the CPU to send commands to the GPU, such as rendering instructions or memory allocations. 
+- These commands are stored in a command buffer, which acts as a queue for the GPU.
 
 ---
 ## Parallel Processing on the GPU: 
-The GPU, designed for parallel computation, processes many data points (like pixels or vertices) simultaneously using its many cores. This makes it highly efficient for tasks like rendering complex 3D scenes, image processing, or physics simulations.
+- The GPU, designed for parallel computation, processes many data points (like pixels or vertices) simultaneously using its many cores. 
+- This makes it highly efficient for tasks like rendering complex 3D scenes, image processing, or physics simulations.
 
 ---
 ## Synchronization: 
-The CPU and GPU often work asynchronously, meaning the CPU can continue with other tasks while the GPU is rendering. The graphics API includes mechanisms for synchronization to ensure that the GPU completes its tasks before moving on to the next frame or job.
+- The CPU and GPU often work asynchronously, meaning the CPU can continue with other tasks while the GPU is rendering. 
+- The graphics API includes mechanisms for synchronization to ensure that the GPU completes its tasks before moving on to the next frame or job.
 
 ---
 ## Rendering Output: 
-Once the GPU finishes processing, it can output the rendered image to a buffer.  Framebuffer (main target), render target, or other buffers.  The results can then composited and displayed on the screen.
+- Once the GPU finishes processing, it can output the rendered image to a buffer.  Framebuffer (main target), render target, or other buffers.  
+- The results can then be composited and displayed on the screen.
 
 ---
-## Godot
-CPU Preparation: (SceneTree, Nodes, Resources):
-  - Resources like textures and meshes (vertices)
-  - Nodes like MeshInstance2D or Node2D handle drawable objects
-  - Camera nodes and light nodes configure viewports and lighting for rendering
+## Godot CPU Preparation: 
+- SceneTree
+- Resources like textures and meshes (vertices)
+- Nodes like MeshInstance2D or Node2D handle drawable objects
+- Camera nodes and light nodes configure viewports and lighting for rendering
 
-Godot resources: textures, models, and shaders:
-  - This data is sent to on gpu memory
+---
+## Godot CPU resources: 
+- textures
+- models
+- shaders
 
-Command buffer and API calls:
-  - Godot’s 'VisualServer’ class takes care of gathering all the renderable objects from the scene graph and sends them to the GPU. The rendering command buffers (drawing, setting shaders, etc.) are prepared here.
+This data is sent to on GPU memory
+
+
+---
+## Godot CPU Command buffer and API calls:
+  - Godot’s 'VisualServer’ class takes care of gathering all the renderable objects from the scene graph and sends them to the GPU. 
+  - The rendering command buffers (drawing, setting shaders, etc.) are prepared here.
+
+---
+## yes
+![godot architecture](/godot_architecture.png "godot")
 
 ---
 ## Shaders 
