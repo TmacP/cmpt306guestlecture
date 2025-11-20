@@ -832,14 +832,7 @@ textures, models, and shaders data sent to on GPU memory
 ---
 ## Shaders 
 
-Specifies programmable operations that execute, in the corresponding stage(s) of the graphics and compute pipelines, for each:
-
-  - **vertex**
-  - control point
-  - tessellated vertex
-  - primitive
-  - **fragment**
-  - workgroup 
+Specifies programmable operations that execute, in the corresponding stage(s) of the graphics and compute pipelines, for each: **vertex**, control point, tessellated vertex, primitive, **fragment**, workgroup 
 
 <div style="display:flex;justify-content:center;">
   <canvas id="shader-nebula" width="520" height="320"
@@ -985,12 +978,7 @@ Specifies programmable operations that execute, in the corresponding stage(s) of
 ---
 ## Types of Pipelines:
 
-**graphics**
-- we will just be looking at the graphics pipeline in this lecture
-
-**compute**
-- Only the compute shader stage is included in a compute pipeline
-- Compute shaders operate on compute invocations in a workgroup
+**graphics** and **compute**
 
 <div style="display:flex;justify-content:center;">
   <canvas id="shader-water" width="520" height="320"
@@ -1101,6 +1089,231 @@ Specifies programmable operations that execute, in the corresponding stage(s) of
 **vertex shader** 
 - execution as a result of primitive assembly
 - occur in the logical pipeline before rasterization. 
+
+
+<div style="display:flex;justify-content:center;">
+  <canvas id="shader-grand-encore" width="520" height="320"
+    style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:18px;
+           background:#020109;box-shadow:0 20px 40px rgba(0,0,0,0.8);">
+  </canvas>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('shader-grand-encore');
+  if (!canvas) return;
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const quad = new Float32Array([
+    -1, -1,
+     1, -1,
+    -1,  1,
+     1,  1,
+  ]);
+
+  const vs = `
+    attribute vec2 position;
+    varying vec2 vUV;
+    void main() {
+      vUV = position;
+      gl_Position = vec4(position, 0.0, 1.0);
+    }
+  `;
+
+  const fs = `
+    precision mediump float;
+    varying vec2 vUV;
+    uniform float u_time;
+    uniform vec2 u_resolution;
+
+    float hash(vec2 p){
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    }
+
+    float noise(vec2 p){
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      vec2 u = f*f*(3.0-2.0*f);
+      float a = hash(i);
+      float b = hash(i + vec2(1.0, 0.0));
+      float c = hash(i + vec2(0.0, 1.0));
+      float d = hash(i + vec2(1.0, 1.0));
+      return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+    }
+
+    float fbm(vec2 p){
+      float v = 0.0;
+      float a = 0.5;
+      for(int i = 0; i < 5; i++){
+        v += a * noise(p);
+        p = p * mat2(1.25, 1.1, -1.1, 1.25);
+        a *= 0.5;
+      }
+      return v;
+    }
+
+    float starfield(vec2 uv, float t){
+      vec2 grid = floor(uv * vec2(160.0, 90.0));
+      float rnd = hash(grid);
+      float sparkle = step(0.9975, rnd);
+      vec2 f = fract(uv * vec2(160.0, 90.0)) - 0.5;
+      float dist = length(f);
+      float falloff = exp(-dist * 26.0);
+      float twinkle = 0.4 + 0.6 * sin(t * 4.5 + rnd * 80.0);
+      return sparkle * falloff * twinkle;
+    }
+
+    vec3 raymarchNebula(vec3 ro, vec3 rd, float t){
+      vec3 col = vec3(0.0);
+      float maxDist = 8.0;
+      float stepSize = maxDist / 64.0;
+      float accum = 0.0;
+
+      for(int i = 0; i < 64; i++){
+        float s = float(i) * stepSize;
+        vec3 p = ro + rd * s;
+
+        // Rotate slowly around black hole axis
+        float ang = t * 0.2 + s * 0.25;
+        float ca = cos(ang), sa = sin(ang);
+        vec2 xz = vec2(
+          ca * p.x - sa * p.z,
+          sa * p.x + ca * p.z
+        );
+
+        float r = length(xz);
+        float heightFalloff = exp(-abs(p.y) * 1.0);
+
+        float dust = fbm(xz * 0.7 + t * 0.15);
+        float swirl = fbm(xz * 2.4 - t * 0.25);
+        float ring = exp(-pow(r - 2.1, 2.0) * 2.5);
+
+        float density = max(dust * 0.7 + swirl * 0.3 - 0.4, 0.0);
+        density *= ring * heightFalloff;
+
+        vec3 baseA = vec3(0.10, 0.02, 0.22);
+        vec3 baseB = vec3(0.05, 0.25, 0.45);
+        vec3 fire  = vec3(1.0, 0.85, 0.55);
+
+        float hue = smoothstep(0.2, 2.8, r);
+        vec3 fogCol = mix(baseA, baseB, hue);
+        vec3 glowCol = mix(fogCol, fire, clamp(density * 2.0, 0.0, 1.0));
+
+        float w = density * 0.06;
+        col += glowCol * w;
+        accum += w;
+      }
+
+      col /= (accum + 0.0001);
+      return col;
+    }
+
+    void main(){
+      float t = u_time * 0.35;
+
+      vec2 uv = vUV;
+      float aspect = u_resolution.x / u_resolution.y;
+      vec2 suv = uv * 0.5 + 0.5;
+
+      // Screen-space radial for lensing & BH mask
+      vec2 hv = suv - 0.5;
+      hv.x *= aspect;
+      float rBH = length(hv);
+
+      // Lensing: pull space toward the center
+      float bend = 0.12 / (0.25 + rBH * 5.0);
+      vec2 lensed = (suv - 0.5) * (1.0 + bend) + 0.5;
+
+      // Reconstruct camera ray
+      vec2 cuv = (lensed * 2.0 - 1.0);
+      cuv.x *= aspect;
+      vec3 ro = vec3(0.0, 0.0, -3.0);
+      vec3 rd = normalize(vec3(cuv, 1.7));
+
+      // Orbit camera a bit
+      float camAng = 0.4 * sin(t * 0.6);
+      float ca = cos(camAng), sa = sin(camAng);
+      ro.xz = mat2(ca, -sa, sa, ca) * ro.xz;
+      rd.xz = mat2(ca, -sa, sa, ca) * rd.xz;
+      ro.y += 0.3 * sin(t * 0.5);
+
+      // Nebula / disk raymarch
+      vec3 neb = raymarchNebula(ro, rd, t);
+
+      // Background galaxy gradient
+      vec3 bgLow = vec3(0.01, 0.02, 0.05);
+      vec3 bgHigh = vec3(0.05, 0.09, 0.18);
+      vec3 bg = mix(bgLow, bgHigh, lensed.y + 0.1);
+
+      vec3 col = bg * 0.7 + neb * 1.3;
+
+      // Starfield on top (also lensed)
+      float stars = starfield(lensed + vec2(t * 0.01, 0.0), t);
+      vec3 starCol = vec3(1.0, 0.96, 0.9);
+      col += starCol * stars * 0.9;
+
+      // Black hole core + photon ring
+      float coreRadius = 0.23;
+      float ringRadius = 0.30;
+      float core = smoothstep(coreRadius, coreRadius * 0.7, rBH);
+      float ring = exp(-pow((rBH - ringRadius) * 22.0, 2.0));
+
+      vec3 ringGlow = vec3(1.0, 0.9, 0.7) * (1.0 + 0.3 * sin(t * 3.0));
+      col *= core;              // punch out the core
+      col += ringGlow * ring;   // bright photon ring
+
+      // Vignette + subtle chroma lift
+      float vignette = smoothstep(1.3, 0.45, length(vUV - 0.5));
+      col *= vignette;
+      col += pow(vignette, 8.0) * vec3(0.18, 0.26, 0.4);
+
+      // Gamma-ish correction
+      col = pow(col * 1.2, vec3(0.9));
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  function compile(type, src){
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    return sh;
+  }
+
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+  const posLoc = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(posLoc);
+
+  const timeLoc = gl.getUniformLocation(program, 'u_time');
+  const resLoc  = gl.getUniformLocation(program, 'u_resolution');
+
+  function render(time){
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.uniform1f(timeLoc, time * 0.001);
+    gl.uniform2f(resLoc, canvas.width, canvas.height);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+
+  requestAnimationFrame(render);
+})();
+</script>
+
+
+---
+## Graphics pipelines:
 
 **fragment shaders**
 - operating on fragments generated by Rasterization 

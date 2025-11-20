@@ -239,12 +239,40 @@ sub, sup {
 }
 
 /* Consistent shader canvas sizing so slides do not overflow */
+section {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 16px;
+    box-sizing: border-box;
+    padding-bottom: 60px;
+    min-height: 100%;
+}
+
+section h1 {
+    margin-bottom: 8px;
+}
+
+section ul,
+section ol {
+    margin-top: 0;
+}
+
+section pre {
+    font-size: 18pt;
+    line-height: 1.25;
+    padding: 14px 18px;
+    max-height: 260px;
+    overflow: auto;
+}
+
 section canvas,
 div canvas {
-    width: min(82%, 560px) !important;
+    width: min(78%, 520px) !important;
     height: auto !important;
-    max-height: 280px !important;
-    margin: 12px auto 4px;
+    max-height: 240px !important;
+    margin: 10px auto 2px;
+    display: block;
 }
 
 section canvas + script,
