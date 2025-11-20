@@ -1351,39 +1351,70 @@ Specifies programmable operations that execute, in the corresponding stage(s) of
 
 
 ---
-## Stage 1 · Canvas & Context
-- create the `<canvas>` and grab a `webgl` context once per slide load
-- keep a 2D fallback so browsers that disable WebGL still show a message
+## Step 1 · Canvas handle (concept)
+- WebGL always starts with a real DOM `<canvas>` for drawing.
+- We keep the reference in a constant so follow-up code can reuse it safely.
 
+---
+## Step 1 · Canvas handle (code)
 ```js
 const canvas = document.getElementById('test-canvas');
+if (!canvas) {
+  throw new Error('missing #test-canvas element');
+}
+```
+
+---
+## Step 2 · Context guard (concept)
+- Browsers can disable WebGL, so always request the context defensively.
+- When WebGL is unavailable, fall back to 2D text so the audience sees *something*.
+
+---
+## Step 2 · Context guard (code)
+```js
 const gl = canvas.getContext('webgl');
 if (!gl) {
-  canvas.getContext('2d').fillText('WebGL not supported', 12, 40);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'tomato';
+  ctx.fillText('WebGL disabled', 12, 40);
   throw new Error('No WebGL context');
 }
 ```
 
+---
+## Step 3 · Clear the framebuffer (concept)
+- A fresh context still contains undefined memory, so we set a background color.
+- Clearing immediately confirms the GPU path is working before shaders enter the chat.
+
+---
+## Step 3 · Clear the framebuffer (code & result)
+```js
+gl.clearColor(0.05, 0.05, 0.08, 1.0);
+gl.clear(gl.COLOR_BUFFER_BIT);
+```
+
 <div style="display:flex;justify-content:center;">
-  <canvas id="webgl-stage-1" width="400" height="260" style="width:80%;max-width:520px;aspect-ratio:4/3;border-radius:10px;background:#06070f;box-shadow:0 8px 20px rgba(0,0,0,0.55);"></canvas>
+  <canvas id="webgl-clear-demo" width="400" height="260" style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:12px;background:#05060b;box-shadow:0 12px 24px rgba(0,0,0,0.55);"></canvas>
 </div>
 
 <script>
 (function(){
-  const canvas = document.getElementById('webgl-stage-1');
+  const canvas = document.getElementById('webgl-clear-demo');
+  if(!canvas) return;
   const gl = canvas.getContext('webgl');
-  if (!gl) return;
+  if(!gl) return;
   gl.clearColor(0.05, 0.05, 0.08, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
 })();
 </script>
 
 ---
-## Stage 2 · Shader Program
-- inline GLSL strings describe how vertices transform and how fragments shade
-- compile each string, link them into a program, and call `gl.useProgram(program)`
-- still no geometry bound, so the canvas stays clear but the program is ready
+## Step 4 · Vertex shader (concept)
+- The vertex shader converts every vertex from CPU-provided attributes into clip space.
+- We also pass the per-vertex RGB attribute through a `varying` so fragments can read it later.
 
+---
+## Step 4 · Vertex shader (code)
 ```js
 const vsSource = `
   attribute vec2 position;
@@ -1394,13 +1425,33 @@ const vsSource = `
     vColor = color;
   }
 `;
+```
 
+---
+## Step 5 · Fragment shader (concept)
+- The fragment shader runs per-pixel after rasterization and finalizes the color.
+- For this demo we simply output the interpolated color from the vertex stage.
+
+---
+## Step 5 · Fragment shader (code)
+```js
 const fsSource = `
   precision mediump float;
   varying vec3 vColor;
-  void main(){ gl_FragColor = vec4(vColor, 1.0); }
+  void main(){
+    gl_FragColor = vec4(vColor, 1.0);
+  }
 `;
+```
 
+---
+## Step 6 · Compile & link (concept)
+- GLSL strings must be compiled into GPU shader objects before they can run.
+- Once both shaders compile, we link them into a single program and bind it with `gl.useProgram`.
+
+---
+## Step 6 · Compile & link (code)
+```js
 function createShader(gl, type, source) {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
@@ -1418,83 +1469,92 @@ gl.linkProgram(program);
 gl.useProgram(program);
 ```
 
-<div style="display:flex;justify-content:center;">
-  <canvas id="webgl-stage-2" width="400" height="260" style="width:80%;max-width:520px;aspect-ratio:4/3;border-radius:10px;background:#06070f;box-shadow:0 8px 20px rgba(0,0,0,0.55);"></canvas>
-</div>
-
-<script>
-(function(){
-  const canvas = document.getElementById('webgl-stage-2');
-  const gl = canvas.getContext('webgl');
-  if (!gl) return;
-
-  const vsSource = `attribute vec2 position; attribute vec3 color; varying vec3 vColor; void main(){ gl_Position = vec4(position, 0.0, 1.0); vColor = color; }`;
-  const fsSource = `precision mediump float; varying vec3 vColor; void main(){ gl_FragColor = vec4(vColor, 1.0); }`;
-  function createShader(type, source){
-    const shader = gl.createShader(type);
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    if(!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return null;
-    return shader;
-  }
-  const vs = createShader(gl.VERTEX_SHADER, vsSource);
-  const fs = createShader(gl.FRAGMENT_SHADER, fsSource);
-  if(!vs || !fs) return;
-  const program = gl.createProgram();
-  gl.attachShader(program, vs);
-  gl.attachShader(program, vs);
-  gl.attachShader(program, fs);
-  gl.linkProgram(program);
-  if(!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
-  gl.clearColor(0.04, 0.04, 0.08, 1.0);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-})();
-</script>
+---
+## Step 7 · Vertex data layout (concept)
+- Each triangle vertex stores its `x/y` position plus an `r/g/b` color.
+- We interleave the values in a single typed array so the GPU can stride through them efficiently.
 
 ---
-## Stage 3 · Vertex Buffers & Draw Call
-- push an interleaved array (xy + rgb) to GPU memory, then describe the layout
-- connect those attributes to the shader via `gl.vertexAttribPointer`
-- issue one `gl.drawArrays` to render a static rainbow triangle
-
+## Step 7 · Vertex data layout (code)
 ```js
 const vertices = new Float32Array([
    0.0,  0.8,  1.0, 0.0, 0.0,
   -0.7, -0.6,  0.0, 1.0, 0.0,
    0.7, -0.6,  0.0, 0.0, 1.0,
 ]);
+```
 
+---
+## Step 8 · Upload to GPU (concept)
+- Buffers live on the GPU, so we create one, bind it to `ARRAY_BUFFER`, and push the typed array once.
+- The usage hint `gl.STATIC_DRAW` tells the driver this data rarely changes (for now).
+
+---
+## Step 8 · Upload to GPU (code)
+```js
 const buffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
 gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+```
 
+---
+## Step 9 · Attribute wiring (concept)
+- The GPU needs to know how to step through the interleaved struct for each attribute.
+- We describe the stride/offset once and enable both arrays so the vertex shader receives data.
+
+---
+## Step 9 · Attribute wiring (code)
+```js
+const positionLoc = gl.getAttribLocation(program, 'position');
+const colorLoc = gl.getAttribLocation(program, 'color');
 const stride = 5 * 4; // five floats per vertex
 gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, stride, 0);
 gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, stride, 8);
 gl.enableVertexAttribArray(positionLoc);
 gl.enableVertexAttribArray(colorLoc);
+```
 
+---
+## Step 10 · First draw call (concept)
+- With the program bound and attributes wired, one `gl.drawArrays` renders the triangle.
+- Clearing first keeps the background consistent with earlier slides.
+
+---
+## Step 10 · First draw call (code & result)
+```js
 gl.clearColor(0.08, 0.08, 0.12, 1.0);
 gl.clear(gl.COLOR_BUFFER_BIT);
 gl.drawArrays(gl.TRIANGLES, 0, 3);
 ```
 
 <div style="display:flex;justify-content:center;">
-  <canvas id="webgl-stage-3" width="400" height="260" style="width:80%;max-width:520px;aspect-ratio:4/3;border-radius:10px;background:#06070f;box-shadow:0 8px 20px rgba(0,0,0,0.55);"></canvas>
+  <canvas id="webgl-static-triangle" width="400" height="260" style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:12px;background:#06070f;box-shadow:0 12px 24px rgba(0,0,0,0.55);"></canvas>
 </div>
 
 <script>
 (function(){
-  const canvas = document.getElementById('webgl-stage-3');
+  const canvas = document.getElementById('webgl-static-triangle');
+  if(!canvas) return;
   const gl = canvas.getContext('webgl');
-  if (!gl) return;
+  if(!gl) return;
 
   const vsSource = `attribute vec2 position; attribute vec3 color; varying vec3 vColor; void main(){ gl_Position = vec4(position, 0.0, 1.0); vColor = color; }`;
   const fsSource = `precision mediump float; varying vec3 vColor; void main(){ gl_FragColor = vec4(vColor, 1.0); }`;
-  function compile(type, src){ const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; }
+
+  function compile(type, src){
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, src);
+    gl.compileShader(shader);
+    if(!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return null;
+    return shader;
+  }
+
   const program = gl.createProgram();
-  gl.attachShader(program, compile(gl.VERTEX_SHADER, vsSource));
-  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fsSource));
+  const vs = compile(gl.VERTEX_SHADER, vsSource);
+  const fs = compile(gl.FRAGMENT_SHADER, fsSource);
+  if(!vs || !fs) return;
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
   gl.linkProgram(program);
   if(!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
   gl.useProgram(program);
@@ -1523,45 +1583,81 @@ gl.drawArrays(gl.TRIANGLES, 0, 3);
 </script>
 
 ---
-## Stage 4 · Animate & Re-upload
-- wrap the draw call in `requestAnimationFrame` so GPU work matches the display refresh
-- rebuild the vertex data each frame to modulate colors with time-based sine waves
-- call `gl.bufferData` with `gl.DYNAMIC_DRAW` so drivers optimize for frequent uploads
+## Step 11 · Animation loop (concept)
+- `requestAnimationFrame` lines the GPU work up with the display refresh for smooth updates.
+- The callback hands us a timestamp so we can advance time-based math safely.
 
+---
+## Step 11 · Animation loop (code)
 ```js
-let time = 0;
 function animate(){
-  time += 0.02;
-  const animatedVertices = new Float32Array([
-     0.0,  0.8,  Math.abs(Math.sin(time)), Math.abs(Math.sin(time + 2.0)), Math.abs(Math.sin(time + 4.0)),
-    -0.7, -0.6,  Math.abs(Math.sin(time + 1.0)), Math.abs(Math.sin(time + 3.0)), Math.abs(Math.sin(time + 5.0)),
-     0.7, -0.6,  Math.abs(Math.sin(time + 2.0)), Math.abs(Math.sin(time + 4.0)), Math.abs(Math.sin(time)),
-  ]);
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  gl.bufferData(gl.ARRAY_BUFFER, animatedVertices, gl.DYNAMIC_DRAW);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  // update GPU resources here
   requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
 ```
 
+---
+## Step 12 · Animated colors (concept)
+- We rebuild the vertex array every frame so each corner pulses through the color wheel.
+- Sine waves keep values nicely clamped between 0 and 1.
+
+---
+## Step 12 · Animated colors (code)
+```js
+let time = 0;
+function animatedVertices(){
+  time += 0.02;
+  return new Float32Array([
+     0.0,  0.8,  Math.abs(Math.sin(time)), Math.abs(Math.sin(time + 2.0)), Math.abs(Math.sin(time + 4.0)),
+    -0.7, -0.6,  Math.abs(Math.sin(time + 1.0)), Math.abs(Math.sin(time + 3.0)), Math.abs(Math.sin(time + 5.0)),
+     0.7, -0.6,  Math.abs(Math.sin(time + 2.0)), Math.abs(Math.sin(time + 4.0)), Math.abs(Math.sin(time)),
+  ]);
+}
+```
+
+---
+## Step 13 · Stream vertices (concept)
+- Mark the upload as `gl.DYNAMIC_DRAW` so the driver optimizes for per-frame updates.
+- After updating the buffer we redraw the triangle with the new colors.
+
+---
+## Step 13 · Stream vertices (code & result)
+```js
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, animatedVertices(), gl.DYNAMIC_DRAW);
+gl.clear(gl.COLOR_BUFFER_BIT);
+gl.drawArrays(gl.TRIANGLES, 0, 3);
+```
+
 <div style="display:flex;justify-content:center;">
-  <canvas id="webgl-stage-4" width="400" height="260" style="width:80%;max-width:520px;aspect-ratio:4/3;border-radius:10px;background:#06070f;box-shadow:0 8px 20px rgba(0,0,0,0.55);"></canvas>
+  <canvas id="webgl-animated-triangle" width="400" height="260" style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:12px;background:#06070f;box-shadow:0 12px 24px rgba(0,0,0,0.55);"></canvas>
 </div>
 
 <script>
 (function(){
-  const canvas = document.getElementById('webgl-stage-4');
+  const canvas = document.getElementById('webgl-animated-triangle');
+  if(!canvas) return;
   const gl = canvas.getContext('webgl');
-  if (!gl) return;
+  if(!gl) return;
 
   const vsSource = `attribute vec2 position; attribute vec3 color; varying vec3 vColor; void main(){ gl_Position = vec4(position, 0.0, 1.0); vColor = color; }`;
   const fsSource = `precision mediump float; varying vec3 vColor; void main(){ gl_FragColor = vec4(vColor, 1.0); }`;
-  function compile(type, src){ const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; }
+
+  function compile(type, src){
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, src);
+    gl.compileShader(shader);
+    if(!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return null;
+    return shader;
+  }
+
   const program = gl.createProgram();
-  gl.attachShader(program, compile(gl.VERTEX_SHADER, vsSource));
-  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fsSource));
+  const vs = compile(gl.VERTEX_SHADER, vsSource);
+  const fs = compile(gl.FRAGMENT_SHADER, fsSource);
+  if(!vs || !fs) return;
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
   gl.linkProgram(program);
   if(!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
   gl.useProgram(program);
@@ -1582,13 +1678,13 @@ requestAnimationFrame(animate);
   let time = 0;
   function animate(){
     time += 0.02;
-    const animatedVertices = new Float32Array([
+    const verts = new Float32Array([
        0.0,  0.8,  Math.abs(Math.sin(time)), Math.abs(Math.sin(time + 2.0)), Math.abs(Math.sin(time + 4.0)),
       -0.7, -0.6,  Math.abs(Math.sin(time + 1.0)), Math.abs(Math.sin(time + 3.0)), Math.abs(Math.sin(time + 5.0)),
        0.7, -0.6,  Math.abs(Math.sin(time + 2.0)), Math.abs(Math.sin(time + 4.0)), Math.abs(Math.sin(time)),
     ]);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, animatedVertices, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     requestAnimationFrame(animate);
@@ -1601,7 +1697,7 @@ requestAnimationFrame(animate);
 ## WebGL In Action
 
 <div style="display:flex;justify-content:center;">
-  <canvas id="test-canvas" width="400" height="400" style="width:80%;max-width:520px;aspect-ratio:1/1;border-radius:10px;background:#0f0f0f;box-shadow:0 8px 20px rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.06);"></canvas>
+  <canvas id="test-canvas" width="400" height="400" style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:12px;background:#0f0f0f;box-shadow:0 12px 24px rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.08);"></canvas>
 </div>
 
 <script>
@@ -1702,4 +1798,175 @@ if (!gl) {
   animate();
   console.log('Triangle animating!');
 }
+</script>
+
+---
+<!-- _class: lead -->
+# Thanks!
+### (GPU says goodbye)
+
+<div style="display:flex;justify-content:center;">
+  <canvas id="shader-grand-finale" width="520" height="320"
+    style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:14px;
+           background:#02020a;box-shadow:0 16px 32px rgba(0,0,0,0.7);">
+  </canvas>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('shader-grand-finale');
+  if (!canvas) return;
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const quad = new Float32Array([
+    -1, -1,
+     1, -1,
+    -1,  1,
+     1,  1,
+  ]);
+
+  const vs = `
+    attribute vec2 position;
+    varying vec2 vUV;
+    void main() {
+      vUV = position;
+      gl_Position = vec4(position, 0.0, 1.0);
+    }
+  `;
+
+  const fs = `
+    precision mediump float;
+    varying vec2 vUV;
+    uniform float u_time;
+    uniform vec2 u_resolution;
+
+    float hash(vec2 p){
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    }
+
+    float starfield(vec2 uv, float t){
+      vec2 grid = floor(uv * vec2(140.0, 80.0));
+      float rnd = hash(grid);
+      float sparkle = step(0.997, rnd);
+      vec2 f = fract(uv * vec2(140.0, 80.0)) - 0.5;
+      float dist = length(f);
+      float falloff = exp(-dist * 22.0);
+      float twinkle = 0.5 + 0.5 * sin(t * 4.0 + rnd * 60.0);
+      return sparkle * falloff * twinkle;
+    }
+
+    void main(){
+      float t = u_time * 0.25;
+
+      vec2 uv = vUV;
+      float aspect = u_resolution.x / u_resolution.y;
+      uv.x *= aspect;
+
+      vec2 lens = uv;
+      float vignette = smoothstep(1.4, 0.4, length(lens));
+
+      vec3 ro = vec3(0.0, 0.0, -2.7 + sin(t * 0.7) * 0.4);
+      ro.xy += 0.25 * vec2(sin(t * 0.9), cos(t * 0.77));
+
+      vec3 rd = normalize(vec3(uv * 1.4, 1.6));
+
+      float angle = 0.35 * sin(t * 0.6);
+      float ca = cos(angle);
+      float sa = sin(angle);
+      mat2 rot = mat2(ca, -sa, sa, ca);
+      rd.xz = rd.xz * rot;
+      ro.xz = ro.xz * rot;
+
+      float stepDist = 0.08;
+      float distAcc = 0.0;
+      float fade = 1.0;
+      vec3 accum = vec3(0.0);
+
+      for (int i = 0; i < 56; i++) {
+        vec3 p = ro + rd * distAcc;
+
+        p = abs(1.7 - mod(p, 3.4));
+
+        float r = length(p);
+        float d = max(0.001, r - 0.25);
+
+        float shell = exp(-d * 4.0) * 0.75;
+        float filaments = 0.5 + 0.5 * sin(r * 5.0 + t * 4.0 + float(i) * 0.3);
+        filaments *= filaments;
+
+        vec3 baseA = vec3(0.15, 0.0, 0.22);
+        vec3 baseB = vec3(0.05, 0.25, 0.45);
+        vec3 glowA = vec3(0.9, 0.4, 1.2);
+        vec3 glowB = vec3(0.2, 0.9, 1.1);
+
+        float hueMix = smoothstep(0.2, 1.4, r);
+        vec3 coreCol = mix(glowA, glowB, hueMix);
+        vec3 fogCol = mix(baseA, baseB, hueMix);
+
+        vec3 col = fogCol + coreCol * shell * filaments;
+
+        float density = shell * 0.45 + filaments * 0.1;
+        density *= fade;
+        accum += col * density;
+
+        fade *= 0.97;
+        distAcc += stepDist;
+      }
+
+      accum /= 3.2;
+
+      vec2 su = (vUV * 0.5 + 0.5);
+      float stars = starfield(su + vec2(t * 0.02, 0.0), t);
+      vec3 starCol = vec3(1.0, 0.95, 0.9);
+      accum += starCol * stars * 0.9;
+
+      vec3 bgA = vec3(0.01, 0.02, 0.04);
+      vec3 bgB = vec3(0.05, 0.08, 0.16);
+      vec3 bg = mix(bgA, bgB, su.y + 0.1);
+      accum += bg * 0.6;
+
+      accum *= vignette;
+      accum += pow(vignette, 8.0) * vec3(0.2, 0.3, 0.5);
+
+      accum = pow(accum * 1.2, vec3(0.92));
+
+      gl_FragColor = vec4(accum, 1.0);
+    }
+  `;
+
+  function compile(type, src){
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    return sh;
+  }
+
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+  const posLoc = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(posLoc);
+
+  const timeLoc = gl.getUniformLocation(program, 'u_time');
+  const resLoc  = gl.getUniformLocation(program, 'u_resolution');
+
+  function render(time){
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.uniform1f(timeLoc, time * 0.001);
+    gl.uniform2f(resLoc, canvas.width, canvas.height);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+
+  requestAnimationFrame(render);
+})();
 </script>
