@@ -87,85 +87,124 @@ footer: "Graphics and Shaders"
   requestAnimationFrame(render);
 })();
 </script>
+
 ---
 ## High level overview
 - CPU prepares the work then sends: commands, code (shaders), and data through a graphics API
 - GPU processes this data in parallel and renders the results
 
 <div style="display:flex;justify-content:center;">
-  <canvas id="shader-overview-flame" width="520" height="320" style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:12px;background:#010101;box-shadow:0 12px 24px rgba(0,0,0,0.55);"></canvas>
+  <canvas id="shader-palette-flow" width="520" height="320"
+    style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:14px;
+           background:#020205;box-shadow:0 16px 32px rgba(0,0,0,0.7);">
+  </canvas>
 </div>
 
 <script>
 (function(){
-  const canvas = document.getElementById('shader-overview-flame');
-  if(!canvas) return;
+  const canvas = document.getElementById('shader-palette-flow');
+  if (!canvas) return;
   const gl = canvas.getContext('webgl');
-  if(!gl) return;
+  if (!gl) return;
 
-  const quad = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
-  const vs = `attribute vec2 position; varying vec2 vUV; void main(){ vUV=position*0.5+0.5; gl_Position=vec4(position,0.0,1.0);} `;
+  const quad = new Float32Array([
+    -1, -1,
+     1, -1,
+    -1,  1,
+     1,  1,
+  ]);
+
+  const vs = `
+    attribute vec2 position;
+    varying vec2 vUV;
+    void main(){
+      vUV = position * 0.5 + 0.5;
+      gl_Position = vec4(position, 0.0, 1.0);
+    }
+  `;
+
   const fs = `
     precision mediump float;
     varying vec2 vUV;
     uniform float u_time;
-    float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-    float noise(vec2 p){
-      vec2 i = floor(p);
-      vec2 f = fract(p);
-      float a = hash(i);
-      float b = hash(i + vec2(1.0, 0.0));
-      float c = hash(i + vec2(0.0, 1.0));
-      float d = hash(i + vec2(1.0, 1.0));
-      vec2 u = f * f * (3.0 - 2.0 * f);
-      return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+    uniform vec2 u_resolution;
+
+    #define iTime u_time
+    #define iResolution vec3(u_resolution, 1.0)
+
+    vec3 palette(float t){
+      vec3 a = vec3(0.5);
+      vec3 b = vec3(0.5);
+      vec3 c = vec3(1.0);
+      vec3 d = vec3(0.263, 0.416, 0.557);
+      return a + b * cos(6.28318 * (c * t + d));
     }
-    float fbm(vec2 p){
-      float value = 0.0;
-      float amp = 0.6;
-      for(int i=0;i<4;i++){
-        value += amp * noise(p);
-        p *= 2.2;
-        amp *= 0.5;
-      }
-      return value;
-    }
+
     void main(){
-      vec2 uv = vUV;
-      vec2 flameUV = vec2(uv.x * 2.0 - 1.0, uv.y * 2.3);
-      float t = u_time * 0.6;
-      float swirl = fbm(vec2(flameUV.x * 1.5, flameUV.y * 2.0 - t * 0.5) + t);
-      float rise = flameUV.y - t * 0.2;
-      float mask = smoothstep(1.6, 0.0, rise);
-      float flicker = sin((flameUV.y + t) * 10.0 + flameUV.x * 6.0) * 0.1;
-      float intensity = clamp(mask + swirl * 0.9 + flicker, 0.0, 1.0);
-      vec3 base = mix(vec3(0.05, 0.0, 0.1), vec3(0.9, 0.25, 0.05), intensity);
-      vec3 hot = vec3(1.0, 0.95, 0.5);
-      vec3 color = mix(base, hot, pow(intensity, 3.0));
-      float ember = smoothstep(0.7, 1.0, intensity) * (0.3 + 0.7 * noise(vec2(flameUV.x * 20.0, flameUV.y * 20.0 + t * 8.0)));
-      color += ember * vec3(1.0, 0.4, 0.1);
-      color *= smoothstep(0.02, 0.5, uv.y);
-      gl_FragColor = vec4(color, clamp(intensity + 0.2, 0.0, 1.0));
+      vec2 fragCoord = vUV * u_resolution;
+      vec2 uv = (fragCoord * 2.0 - iResolution.xy) / iResolution.y;
+      vec2 uv0 = uv;
+      vec3 finalColor = vec3(0.0);
+
+      for(float i = 0.0; i < 4.0; i++){
+        uv = fract(uv * 1.5) - 0.5;
+        float d = length(uv) * exp(-length(uv0));
+        vec3 col = palette(length(uv0) + i * 0.4 + iTime * 0.4);
+        d = sin(d * 8.0 + iTime) / 8.0;
+        d = abs(d);
+        d = pow(0.01 / d, 1.2);
+        finalColor += col * d;
+      }
+
+      gl_FragColor = vec4(finalColor, 1.0);
     }
   `;
+
+  function compile(type, source){
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.error(gl.getShaderInfoLog(shader));
+      return null;
+    }
+    return shader;
+  }
+
   const program = gl.createProgram();
-  function compile(t,s){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);return sh;}
-  gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
-  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+  const vsHandle = compile(gl.VERTEX_SHADER, vs);
+  const fsHandle = compile(gl.FRAGMENT_SHADER, fs);
+  if (!vsHandle || !fsHandle) return;
+  gl.attachShader(program, vsHandle);
+  gl.attachShader(program, fsHandle);
   gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(program));
+    return;
+  }
   gl.useProgram(program);
-  const buffer=gl.createBuffer();
+
+  const buffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
   gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
-  const pos=gl.getAttribLocation(program,'position');
-  gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
-  gl.enableVertexAttribArray(pos);
-  const timeLoc=gl.getUniformLocation(program,'u_time');
+
+  const posLoc = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(posLoc);
+
+  const timeLoc = gl.getUniformLocation(program, 'u_time');
+  const resLoc = gl.getUniformLocation(program, 'u_resolution');
+
+  const start = performance.now();
+
   function render(time){
-    gl.uniform1f(timeLoc,time*0.001);
-    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.uniform1f(timeLoc, (time - start) * 0.001);
+    gl.uniform2f(resLoc, canvas.width, canvas.height);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     requestAnimationFrame(render);
   }
+
   requestAnimationFrame(render);
 })();
 </script>
@@ -756,75 +795,186 @@ textures, models, and shaders data sent to GPU memory
 ## Godot CPU Command buffer and API calls:
   - Godot’s 'VisualServer’ class takes care of gathering all the renderable objects from the scene graph and sends them to the GPU. 
   - The rendering command buffers (drawing, setting shaders, etc.) are prepared here.
-
 <div style="display:flex;justify-content:center;">
-  <canvas id="shader-canvas-6" width="520" height="320" style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:12px;background:#010101;box-shadow:0 12px 24px rgba(0,0,0,0.55);"></canvas>
+  <canvas id="shader-fractal-starfield" width="520" height="320"
+    style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:14px;
+           background:#03030a;box-shadow:0 16px 32px rgba(0,0,0,0.65);">
+  </canvas>
 </div>
 
 <script>
 (function(){
-  const canvas = document.getElementById('shader-canvas-6');
-  const gl = canvas.getContext('webgl'); if(!gl) return;
-  const quad = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
-  const vs = `attribute vec2 position; varying vec2 vUV; void main(){ vUV = position; gl_Position = vec4(position,0.0,1.0);} `;
+  const canvas = document.getElementById('shader-fractal-starfield');
+  if (!canvas) return;
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const quad = new Float32Array([
+    -1, -1,
+     1, -1,
+    -1,  1,
+     1,  1,
+  ]);
+
+  const vs = `
+    attribute vec2 position;
+    varying vec2 vUV;
+    void main(){
+      vUV = position * 0.5 + 0.5;
+      gl_Position = vec4(position, 0.0, 1.0);
+    }
+  `;
+
   const fs = `
     precision mediump float;
     varying vec2 vUV;
     uniform float u_time;
-    mat2 rotate(float a){
-      float s = sin(a), c = cos(a);
-      return mat2(c,-s,s,c);
+    uniform vec2 u_resolution;
+
+    #define iTime u_time
+    #define iResolution vec3(u_resolution, 1.0)
+    #define NUM_LAYERS 10.0
+
+    mat2 Rot(float a){
+      float c = cos(a), s = sin(a);
+      return mat2(c, -s, s, c);
     }
-    float checker(vec2 p){
-      vec2 g = floor(p);
-      return mod(g.x + g.y, 2.0);
+
+    float Star(vec2 uv, float flare){
+      float col = 0.0;
+      float d = length(uv);
+      float m = 0.02 / d;
+
+      float rays = max(0.0, 1.0 - abs(uv.x * uv.y * 1000.0));
+      m += rays * flare;
+      uv *= Rot(3.1415 / 4.0);
+      rays = max(0.0, 1.0 - abs(uv.x * uv.y * 1000.0));
+      m += rays * 0.3 * flare;
+
+      m *= smoothstep(1.0, 0.2, d);
+      return m;
     }
-    float edgeGlow(vec2 p){
-      vec2 frac = abs(fract(p) - 0.5);
-      float line = min(frac.x, frac.y);
-      return smoothstep(0.15, 0.0, line);
+
+    float Hash21(vec2 p){
+      p = fract(p * vec2(123.34, 456.21));
+      p += dot(p, p + 45.32);
+      return fract(p.x * p.y);
     }
+
+    vec3 StarLayer(vec2 uv){
+      vec3 col = vec3(0.0);
+      vec2 gv = fract(uv) - 0.5;
+      vec2 id = floor(uv);
+
+      for(int y = -1; y <= 1; y++){
+        for(int x = -1; x <= 1; x++){
+          vec2 offs = vec2(float(x), float(y));
+          float n = Hash21(id + offs);
+          float size = fract(n * 345.32);
+          vec2 p = vec2(n, fract(n * 34.0));
+          float star = Star(gv - offs - p + 0.5, smoothstep(0.8, 1.0, size) * 0.6);
+
+          vec3 hueShift = sin(fract(n * 2345.2) * vec3(0.2, 0.3, 0.9) * 123.2) * 0.5 + 0.5;
+          vec3 color = hueShift * vec3(1.0, 0.25, 1.0 + size);
+
+          star *= sin(iTime * 3.0 + n * 6.2831) * 0.4 + 1.0;
+          col += star * size * color;
+        }
+      }
+      return col;
+    }
+
+    vec2 N(float angle){
+      return vec2(sin(angle), cos(angle));
+    }
+
     void main(){
-      vec2 uv = vUV * 2.0 - 1.0;
-      uv *= rotate(0.2 * sin(u_time * 0.4));
-      uv.y += 0.2 * sin(u_time * 0.3 + uv.x * 3.0);
-      float depth = 1.0 / (0.4 + abs(uv.y) * 1.4);
-      vec2 warped = vec2(uv.x * depth * 3.5, (uv.y + 0.5) * depth * 6.0 + u_time * 0.6);
-      float board = checker(warped);
-      vec3 baseDark = vec3(0.05, 0.04, 0.08);
-      vec3 baseBright = vec3(0.2, 0.9, 1.2);
-      vec3 color = mix(baseDark, baseBright, board);
-      float neon = edgeGlow(warped) * depth;
-      vec3 glowA = vec3(0.9, 0.2, 0.8);
-      vec3 glowB = vec3(0.2, 0.8, 1.2);
-      color += mix(glowA, glowB, 0.5 + 0.5 * sin(u_time + warped.y)) * neon;
-      float pulse = 0.5 + 0.5 * sin(u_time * 2.0 + length(uv) * 5.0);
-      color += pulse * 0.08;
-      color = pow(color, vec3(0.9));
-      gl_FragColor = vec4(color, 1.0);
+      vec2 fragCoord = vUV * u_resolution;
+      vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+      float t = iTime * 0.01;
+
+      uv.x = abs(uv.x);
+      uv.y += tan((5.0 / 6.0) * 3.1415) * 0.5;
+
+      vec2 n = N((5.0 / 6.0) * 3.1415);
+      float d = dot(uv - vec2(0.5, 0.0), n);
+      uv -= n * max(0.0, d) * 2.0;
+
+      n = N((2.0 / 3.0) * 3.1415);
+      float scale = 1.0;
+      uv.x += 1.5 / 1.25;
+      for(int i = 0; i < 5; i++){
+        scale *= 1.25;
+        uv *= 1.25;
+        uv.x -= 1.5;
+        uv.x = abs(uv.x);
+        uv.x -= 0.5;
+        uv -= n * min(0.0, dot(uv, n)) * 2.0;
+      }
+
+      uv *= Rot(t);
+      vec3 col = vec3(0.0);
+
+      for(float i = 0.0; i < 1.0; i += 1.0 / NUM_LAYERS){
+        float depth = fract(i + t);
+        float scaleLayer = mix(20.0, 0.5, depth);
+        float fade = depth * smoothstep(1.0, 0.9, depth);
+        col += StarLayer(uv * scaleLayer + i * 453.2) * fade;
+      }
+
+      gl_FragColor = vec4(col, 1.0);
     }
   `;
-  const program=gl.createProgram();
-  function compile(t,s){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);return sh;}
-  gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
-  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+
+  function compile(type, source){
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.error(gl.getShaderInfoLog(shader));
+      return null;
+    }
+    return shader;
+  }
+
+  const program = gl.createProgram();
+  const vsHandle = compile(gl.VERTEX_SHADER, vs);
+  const fsHandle = compile(gl.FRAGMENT_SHADER, fs);
+  if (!vsHandle || !fsHandle) return;
+  gl.attachShader(program, vsHandle);
+  gl.attachShader(program, fsHandle);
   gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(program));
+    return;
+  }
   gl.useProgram(program);
-  const buffer=gl.createBuffer();
+
+  const buffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
   gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
-  const pos=gl.getAttribLocation(program,'position');
-  gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
-  gl.enableVertexAttribArray(pos);
-  const timeLoc=gl.getUniformLocation(program,'u_time');
+
+  const posLoc = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(posLoc);
+
+  const timeLoc = gl.getUniformLocation(program, 'u_time');
+  const resLoc = gl.getUniformLocation(program, 'u_resolution');
+
   function render(time){
-    gl.uniform1f(timeLoc,time*0.001);
-    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.uniform1f(timeLoc, time * 0.001);
+    gl.uniform2f(resLoc, canvas.width, canvas.height);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     requestAnimationFrame(render);
   }
+
   requestAnimationFrame(render);
 })();
 </script>
+
+
+
 ---
 ## VisualServer class
 ![godot architecture](godot_architecture.png "godot")
@@ -2021,18 +2171,22 @@ if (!gl) {
 ---
 <!-- _class: lead -->
 # Thanks!
-### (GPU says goodbye)
+## Resources:
+
+https://www.shadertoy.com
+https://webgl2fundamentals.org/
+https://webgpufundamentals.org/
 
 <div style="display:flex;justify-content:center;">
-  <canvas id="shader-grand-finale" width="520" height="320"
+  <canvas id="shader-fractal-pyramid-thanks" width="520" height="320"
     style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:14px;
-           background:#02020a;box-shadow:0 16px 32px rgba(0,0,0,0.7);">
+           background:#03030a;box-shadow:0 16px 32px rgba(0,0,0,0.65);">
   </canvas>
 </div>
 
 <script>
 (function(){
-  const canvas = document.getElementById('shader-grand-finale');
+  const canvas = document.getElementById('shader-fractal-pyramid-thanks');
   if (!canvas) return;
   const gl = canvas.getContext('webgl');
   if (!gl) return;
@@ -2047,8 +2201,8 @@ if (!gl) {
   const vs = `
     attribute vec2 position;
     varying vec2 vUV;
-    void main() {
-      vUV = position;
+    void main(){
+      vUV = position * 0.5 + 0.5;
       gl_Position = vec4(position, 0.0, 1.0);
     }
   `;
@@ -2059,111 +2213,89 @@ if (!gl) {
     uniform float u_time;
     uniform vec2 u_resolution;
 
-    float hash(vec2 p){
-      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    vec3 palette(float d){
+      return mix(vec3(0.2, 0.7, 0.9), vec3(1.0, 0.0, 1.0), d);
     }
 
-    float starfield(vec2 uv, float t){
-      vec2 grid = floor(uv * vec2(140.0, 80.0));
-      float rnd = hash(grid);
-      float sparkle = step(0.997, rnd);
-      vec2 f = fract(uv * vec2(140.0, 80.0)) - 0.5;
-      float dist = length(f);
-      float falloff = exp(-dist * 22.0);
-      float twinkle = 0.5 + 0.5 * sin(t * 4.0 + rnd * 60.0);
-      return sparkle * falloff * twinkle;
+    vec2 rotate(vec2 p, float a){
+      float c = cos(a);
+      float s = sin(a);
+      return mat2(c, -s, s, c) * p;
+    }
+
+    float map(vec3 p){
+      vec3 q = p;
+      float t = u_time * 0.2;
+      for(int i = 0; i < 8; ++i){
+        q.xz = rotate(q.xz, t);
+        q.xy = rotate(q.xy, t * 1.89);
+        q.xz = abs(q.xz);
+        q.xz -= 0.5;
+      }
+      return dot(sign(q), q) / 5.0;
+    }
+
+    vec4 rm(vec3 ro, vec3 rd){
+      float t = 0.0;
+      vec3 col = vec3(0.0);
+      float d = 1.0;
+      for(int i = 0; i < 64; ++i){
+        vec3 p = ro + rd * t;
+        d = map(p) * 0.5;
+        if (d < 0.02) {
+          break;
+        }
+        if (d > 100.0) {
+          break;
+        }
+        float safeD = max(d, 0.001);
+        col += palette(length(p) * 0.1) / (400.0 * safeD);
+        t += d;
+      }
+      float alpha = clamp(1.0 / (max(d, 0.02) * 100.0), 0.0, 1.0);
+      return vec4(col, alpha);
     }
 
     void main(){
-      float t = u_time * 0.25;
+      vec2 fragCoord = vUV * u_resolution;
+      vec2 uv = (fragCoord - 0.5 * u_resolution) / u_resolution.x;
 
-      vec2 uv = vUV;
-      float aspect = u_resolution.x / u_resolution.y;
-      uv.x *= aspect;
+      vec3 ro = vec3(0.0, 0.0, -50.0);
+      ro.xz = rotate(ro.xz, u_time);
+      vec3 cf = normalize(-ro);
+      vec3 cs = normalize(cross(cf, vec3(0.0, 1.0, 0.0)));
+      vec3 cu = normalize(cross(cf, cs));
 
-      vec2 lens = uv;
-      float vignette = smoothstep(1.4, 0.4, length(lens));
+      vec3 uuv = ro + cf * 3.0 + uv.x * cs + uv.y * cu;
+      vec3 rd = normalize(uuv - ro);
 
-      vec3 ro = vec3(0.0, 0.0, -2.7 + sin(t * 0.7) * 0.4);
-      ro.xy += 0.25 * vec2(sin(t * 0.9), cos(t * 0.77));
-
-      vec3 rd = normalize(vec3(uv * 1.4, 1.6));
-
-      float angle = 0.35 * sin(t * 0.6);
-      float ca = cos(angle);
-      float sa = sin(angle);
-      mat2 rot = mat2(ca, -sa, sa, ca);
-      rd.xz = rd.xz * rot;
-      ro.xz = ro.xz * rot;
-
-      float stepDist = 0.08;
-      float distAcc = 0.0;
-      float fade = 1.0;
-      vec3 accum = vec3(0.0);
-
-      for (int i = 0; i < 56; i++) {
-        vec3 p = ro + rd * distAcc;
-
-        p = abs(1.7 - mod(p, 3.4));
-
-        float r = length(p);
-        float d = max(0.001, r - 0.25);
-
-        float shell = exp(-d * 4.0) * 0.75;
-        float filaments = 0.5 + 0.5 * sin(r * 5.0 + t * 4.0 + float(i) * 0.3);
-        filaments *= filaments;
-
-        vec3 baseA = vec3(0.15, 0.0, 0.22);
-        vec3 baseB = vec3(0.05, 0.25, 0.45);
-        vec3 glowA = vec3(0.9, 0.4, 1.2);
-        vec3 glowB = vec3(0.2, 0.9, 1.1);
-
-        float hueMix = smoothstep(0.2, 1.4, r);
-        vec3 coreCol = mix(glowA, glowB, hueMix);
-        vec3 fogCol = mix(baseA, baseB, hueMix);
-
-        vec3 col = fogCol + coreCol * shell * filaments;
-
-        float density = shell * 0.45 + filaments * 0.1;
-        density *= fade;
-        accum += col * density;
-
-        fade *= 0.97;
-        distAcc += stepDist;
-      }
-
-      accum /= 3.2;
-
-      vec2 su = (vUV * 0.5 + 0.5);
-      float stars = starfield(su + vec2(t * 0.02, 0.0), t);
-      vec3 starCol = vec3(1.0, 0.95, 0.9);
-      accum += starCol * stars * 0.9;
-
-      vec3 bgA = vec3(0.01, 0.02, 0.04);
-      vec3 bgB = vec3(0.05, 0.08, 0.16);
-      vec3 bg = mix(bgA, bgB, su.y + 0.1);
-      accum += bg * 0.6;
-
-      accum *= vignette;
-      accum += pow(vignette, 8.0) * vec3(0.2, 0.3, 0.5);
-
-      accum = pow(accum * 1.2, vec3(0.92));
-
-      gl_FragColor = vec4(accum, 1.0);
+      vec4 col = rm(ro, rd);
+      gl_FragColor = vec4(col.rgb, 1.0);
     }
   `;
 
-  function compile(type, src){
-    const sh = gl.createShader(type);
-    gl.shaderSource(sh, src);
-    gl.compileShader(sh);
-    return sh;
+  function compile(type, source){
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.error(gl.getShaderInfoLog(shader));
+      return null;
+    }
+    return shader;
   }
 
   const program = gl.createProgram();
-  gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
-  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+  const vsHandle = compile(gl.VERTEX_SHADER, vs);
+  const fsHandle = compile(gl.FRAGMENT_SHADER, fs);
+  if (!vsHandle || !fsHandle) return;
+  gl.attachShader(program, vsHandle);
+  gl.attachShader(program, fsHandle);
   gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(program));
+    return;
+  }
   gl.useProgram(program);
 
   const buffer = gl.createBuffer();
@@ -2175,7 +2307,7 @@ if (!gl) {
   gl.enableVertexAttribArray(posLoc);
 
   const timeLoc = gl.getUniformLocation(program, 'u_time');
-  const resLoc  = gl.getUniformLocation(program, 'u_resolution');
+  const resLoc = gl.getUniformLocation(program, 'u_resolution');
 
   function render(time){
     gl.viewport(0, 0, canvas.width, canvas.height);
