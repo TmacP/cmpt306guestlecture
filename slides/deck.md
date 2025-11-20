@@ -69,7 +69,7 @@ This data is sent to on GPU memory
 
 ---
 ## yes
-![godot architecture](/godot_architecture.png "godot")
+![godot architecture](godot_architecture.png "godot")
 
 ---
 ## Shaders 
