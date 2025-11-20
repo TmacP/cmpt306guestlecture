@@ -5,11 +5,5 @@ package-lock.json
 # MacOS cruft
 .DS_Store
 
-# Marp outputs
-/dist/
-slides/*.html
-slides/*.pdf
-slides/*.pptx
-
 # Temp
 *.log
