@@ -237,3 +237,17 @@ img {
 sub, sup {
     display: inline-block;
 }
+
+/* Consistent shader canvas sizing so slides do not overflow */
+section canvas,
+div canvas {
+    width: min(82%, 560px) !important;
+    height: auto !important;
+    max-height: 280px !important;
+    margin: 12px auto 4px;
+}
+
+section canvas + script,
+div canvas + script {
+    display: none;
+}

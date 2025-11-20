@@ -567,6 +567,113 @@ footer: "Graphics and Shaders"
 - Nodes like MeshInstance2D or Node2D handle drawable objects
 - Camera nodes and light nodes configure viewports and lighting for rendering
 
+<div style="display:flex;justify-content:center;">
+  <canvas id="shader-canvas-scenetree" width="520" height="320" style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:12px;background:#010101;box-shadow:0 12px 24px rgba(0,0,0,0.55);"></canvas>
+</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('shader-canvas-scenetree');
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const quad = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+  const vs = `attribute vec2 position; varying vec2 vUV; void main() { vUV = position*0.5+0.5; gl_Position = vec4(position, 0.0, 1.0); }`;
+  const fs = `
+    precision mediump float;
+    varying vec2 vUV;
+    uniform float u_time;
+    
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    
+    float noise(vec2 p){
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      float n0 = mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x);
+      float n1 = mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x);
+      return mix(n0, n1, u.y);
+    }
+    
+    float fbm(vec2 p){
+      float value = 0.0;
+      float amp = 0.5;
+      for(int i = 0; i < 6; i++){
+        value += amp * noise(p);
+        p *= 2.0;
+        amp *= 0.5;
+      }
+      return value;
+    }
+    
+    void main(){
+      vec2 uv = vUV;
+      float t = u_time * 0.3;
+      
+      vec2 p = uv * 3.0;
+      p += vec2(sin(t * 0.3) * 2.0, cos(t * 0.25) * 2.0);
+      
+      float n1 = fbm(p + t * 0.5);
+      float n2 = fbm(p * 1.5 - t * 0.3 + 10.0);
+      float n3 = fbm(p * 0.8 + t * 0.4 + 20.0);
+      
+      float pattern = sin(n1 * 6.28 - t * 2.0) * 0.5 + 0.5;
+      pattern = mix(pattern, n2, 0.3);
+      
+      vec3 col = vec3(0.0);
+      
+      col += mix(vec3(0.9, 0.3, 0.6), vec3(1.0, 0.2, 0.8), pattern);
+      col += mix(vec3(0.2, 0.8, 1.0), vec3(0.4, 0.9, 0.95), sin(n3 * 3.14 + t));
+      
+      vec2 swirl = vec2(sin(uv.y * 5.0 - t + uv.x * 3.0), cos(uv.x * 5.0 + t * 0.7 + uv.y * 3.0)) * 0.1;
+      float dist = length(uv - 0.5 + swirl);
+      
+      col *= mix(1.2, 0.5, smoothstep(0.0, 1.0, dist));
+      col += 0.3 * vec3(sin(t * 1.3), sin(t * 1.7 + 2.0), sin(t * 1.1 + 4.0)) * n1;
+      col = pow(col, vec3(0.85));
+      
+      float chromatic = 0.015 * sin(t * 0.5);
+      float r = fbm(uv * 2.5 + t + chromatic);
+      float g = fbm(uv * 2.5 + t);
+      float b = fbm(uv * 2.5 + t - chromatic);
+      col += 0.2 * vec3(r, g, b) * (0.5 + 0.5 * sin(t * 2.0));
+      
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  const program = gl.createProgram();
+  function compile(type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    return shader;
+  }
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+  const pos = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(pos);
+
+  const timeLoc = gl.getUniformLocation(program, 'u_time');
+
+  function render(time) {
+    gl.uniform1f(timeLoc, time * 0.001);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+})();
+</script>
+
+
 ---
 ## Godot CPU resources: 
 textures, models, and shaders data sent to on GPU memory
@@ -644,8 +751,6 @@ textures, models, and shaders data sent to on GPU memory
   requestAnimationFrame(render);
 })();
 </script>
-
-
 
 ---
 ## Godot CPU Command buffer and API calls:
@@ -736,6 +841,147 @@ Specifies programmable operations that execute, in the corresponding stage(s) of
   - **fragment**
   - workgroup 
 
+<div style="display:flex;justify-content:center;">
+  <canvas id="shader-nebula" width="520" height="320"
+    style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:12px;
+           background:#02020a;box-shadow:0 12px 24px rgba(0,0,0,0.55);">
+  </canvas>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('shader-nebula');
+  if (!canvas) return;
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const quad = new Float32Array([
+    -1,-1,  1,-1,
+    -1, 1,  1, 1,
+  ]);
+
+  const vs = `
+    attribute vec2 position;
+    varying vec2 vUV;
+    void main() {
+      vUV = position * 0.5 + 0.5;
+      gl_Position = vec4(position, 0.0, 1.0);
+    }
+  `;
+
+  const fs = `
+    precision mediump float;
+    varying vec2 vUV;
+    uniform float u_time;
+
+    float hash(vec2 p){
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    }
+
+    float noise(vec2 p){
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      vec2 u = f*f*(3.0-2.0*f);
+      float a = hash(i);
+      float b = hash(i + vec2(1.0, 0.0));
+      float c = hash(i + vec2(0.0, 1.0));
+      float d = hash(i + vec2(1.0, 1.0));
+      return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+    }
+
+    float fbm(vec2 p){
+      float v = 0.0;
+      float a = 0.5;
+      for(int i = 0; i < 5; i++){
+        v += a * noise(p);
+        p *= 2.3;
+        a *= 0.5;
+      }
+      return v;
+    }
+
+    vec3 nebula(vec2 uv, float t){
+      vec2 p = (uv - 0.5) * 3.0;
+      p.x += 0.2 * sin(t * 0.13);
+      p.y += 0.2 * cos(t * 0.17);
+
+      float n1 = fbm(p * 1.2 + t * 0.05);
+      float n2 = fbm(p * 3.5 - t * 0.08);
+      float n = mix(n1, n2, 0.5);
+
+      vec3 colA = vec3(0.05, 0.1, 0.25);
+      vec3 colB = vec3(0.3, 0.0, 0.4);
+      vec3 colC = vec3(0.0, 0.6, 0.9);
+
+      vec3 color = mix(colA, colB, smoothstep(0.2, 0.8, n));
+      color = mix(color, colC, pow(n, 3.0));
+
+      return color;
+    }
+
+    float starField(vec2 uv, float t){
+      vec2 p = uv * vec2(120.0, 60.0);
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      float rnd = hash(i);
+      float sparkle = step(0.997, rnd);
+      float twinkle = 0.5 + 0.5 * sin(t * 3.0 + rnd * 50.0);
+      float dist = length(f - 0.5);
+      float falloff = exp(-40.0 * dist);
+      return sparkle * twinkle * falloff;
+    }
+
+    void main(){
+      float t = u_time * 0.5;
+      vec2 uv = vUV;
+
+      vec3 col = nebula(uv, t);
+
+      float stars = starField(uv, t);
+      col += vec3(1.0, 0.95, 0.8) * stars;
+
+      float vignette = smoothstep(1.2, 0.5, length(uv - 0.5));
+      col *= vignette;
+
+      col = pow(col, vec3(0.9));
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  function compile(type, src){
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    return sh;
+  }
+
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+  const pos = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(pos);
+
+  const timeLoc = gl.getUniformLocation(program, 'u_time');
+
+  function render(time){
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.uniform1f(timeLoc, time * 0.001);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+})();
+</script>
+
+
 ---
 ## Types of Pipelines:
 
@@ -745,6 +991,109 @@ Specifies programmable operations that execute, in the corresponding stage(s) of
 **compute**
 - Only the compute shader stage is included in a compute pipeline
 - Compute shaders operate on compute invocations in a workgroup
+
+<div style="display:flex;justify-content:center;">
+  <canvas id="shader-water" width="520" height="320"
+    style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:12px;
+           background:#021017;box-shadow:0 12px 24px rgba(0,0,0,0.55);">
+  </canvas>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('shader-water');
+  if (!canvas) return;
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const quad = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+
+  const vs = `
+    attribute vec2 position;
+    varying vec2 vUV;
+    void main() {
+      vUV = position * 0.5 + 0.5;
+      gl_Position = vec4(position, 0.0, 1.0);
+    }
+  `;
+
+  const fs = `
+    precision mediump float;
+    varying vec2 vUV;
+    uniform float u_time;
+
+    float wave(vec2 p, float freq, float speed, float phase){
+      return sin(dot(p, vec2(freq, freq*0.73)) + u_time * speed + phase);
+    }
+
+    void main(){
+      vec2 uv = vUV;
+      vec2 p = (uv - 0.5) * 6.0;
+      float h = 0.0;
+
+      h += wave(p, 1.3,  0.9,  0.0);
+      h += wave(p, 2.1,  1.4,  1.7);
+      h += wave(p, 3.7,  1.9, -0.8);
+      h += wave(p, 5.2,  2.3,  2.4);
+
+      h /= 4.0;
+
+      float caustics = exp(-abs(h) * 3.0);
+      caustics += pow(max(0.0, h), 3.0) * 2.0;
+
+      vec3 deep = vec3(0.0, 0.07, 0.11);
+      vec3 mid  = vec3(0.0, 0.35, 0.45);
+      vec3 surf = vec3(0.8, 1.0, 0.95);
+
+      float depth = smoothstep(0.0, 1.0, uv.y);
+      vec3 base = mix(deep, mid, depth);
+
+      vec3 color = base + surf * caustics * 0.7;
+
+      float sky = smoothstep(0.4, 1.0, uv.y);
+      color = mix(color, vec3(0.15, 0.35, 0.7), sky * 0.15);
+
+      float vignette = smoothstep(0.9, 0.3, length(uv - 0.5));
+      color *= vignette;
+
+      color = pow(color, vec3(0.9));
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+
+  function compile(type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+  const pos = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(pos);
+
+  const timeLoc = gl.getUniformLocation(program, 'u_time');
+
+  function render(time){
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.uniform1f(timeLoc, time * 0.001);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+})();
+</script>
+
 
 ---
 ## Graphics pipelines: 
@@ -757,6 +1106,113 @@ Specifies programmable operations that execute, in the corresponding stage(s) of
 - operating on fragments generated by Rasterization 
 - occurs logically after rasterization.
 
+<div style="display:flex;justify-content:center;">
+  <canvas id="shader-godrays" width="520" height="320"
+    style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:12px;
+           background:#020308;box-shadow:0 12px 24px rgba(0,0,0,0.55);">
+  </canvas>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('shader-godrays');
+  if (!canvas) return;
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const quad = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+
+  const vs = `
+    attribute vec2 position;
+    varying vec2 vUV;
+    void main(){
+      vUV = position * 0.5 + 0.5;
+      gl_Position = vec4(position, 0.0, 1.0);
+    }
+  `;
+
+  const fs = `
+    precision mediump float;
+    varying vec2 vUV;
+    uniform float u_time;
+
+    float hash(float n){ return fract(sin(n) * 43758.5453123); }
+
+    float star(vec2 p, float rays, float sharp){
+      float a = atan(p.y, p.x);
+      float r = length(p);
+      float d = abs(mod(a * rays / 6.28318, 1.0) - 0.5);
+      d = pow(1.0 - d * 2.0, sharp);
+      return d / (1.0 + r * 8.0);
+    }
+
+    void main(){
+      vec2 uv = vUV;
+      vec2 center = vec2(0.3 + 0.1 * sin(u_time * 0.3),
+                         0.7 + 0.05 * cos(u_time * 0.41));
+      vec2 p = uv - center;
+
+      float baseGlow = exp(-length(p) * 6.0);
+
+      float rays = star(p, 18.0, 4.0);
+      float swirl = sin(u_time * 0.7 + length(p) * 10.0) * 0.5 + 0.5;
+      float light = baseGlow * 1.4 + rays * (0.8 + 0.8 * swirl);
+
+      vec3 bgTop    = vec3(0.02, 0.05, 0.10);
+      vec3 bgBottom = vec3(0.0, 0.0, 0.0);
+      vec3 bg = mix(bgBottom, bgTop, uv.y);
+
+      vec3 sunCore  = vec3(1.0, 0.9, 0.7);
+      vec3 sunEdge  = vec3(0.9, 0.6, 0.9);
+      vec3 sunColor = mix(sunEdge, sunCore, clamp(light, 0.0, 1.0));
+
+      vec3 col = bg + sunColor * light;
+
+      float flicker = 0.05 * sin(u_time * 25.0 + hash(floor(u_time)) * 30.0);
+      col += flicker * sunCore;
+
+      float vignette = smoothstep(1.3, 0.4, length(uv - 0.5));
+      col *= vignette;
+
+      col = pow(col, vec3(0.9));
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  function compile(type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+  const pos = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(pos);
+
+  const timeLoc = gl.getUniformLocation(program, 'u_time');
+
+  function render(time){
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.uniform1f(timeLoc, time * 0.001);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+})();
+</script>
+
+
 ---
 ## WebGL
 - low-level 3D graphics API based on OpenGL ES
@@ -764,6 +1220,382 @@ Specifies programmable operations that execute, in the corresponding stage(s) of
 - Supported by all major browser vendors: Safari, Chrome, Edge, Firefox
 - Godot web export using WebGl 2.0 as backend
 - Godot uses a shading language similar to GLSL ES 3.0
+
+<div style="display:flex;justify-content:center;">
+  <canvas id="shader-neural" width="520" height="320"
+    style="width:85%;max-width:640px;aspect-ratio:13/8;border-radius:12px;
+           background:#020008;box-shadow:0 12px 24px rgba(0,0,0,0.55);">
+  </canvas>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('shader-neural');
+  if (!canvas) return;
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const quad = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+
+  const vs = `
+    attribute vec2 position;
+    varying vec2 vUV;
+    void main(){
+      vUV = position * 0.5 + 0.5;
+      gl_Position = vec4(position, 0.0, 1.0);
+    }
+  `;
+
+  const fs = `
+    precision mediump float;
+    varying vec2 vUV;
+    uniform float u_time;
+
+    float hash(vec2 p){
+      return fract(sin(dot(p, vec2(27.1, 113.2))) * 43758.5453123);
+    }
+
+    float noise(vec2 p){
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      vec2 u = f*f*(3.0-2.0*f);
+      float a = hash(i);
+      float b = hash(i+vec2(1.0,0.0));
+      float c = hash(i+vec2(0.0,1.0));
+      float d = hash(i+vec2(1.0,1.0));
+      return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+    }
+
+    float lineGrid(vec2 p){
+      vec2 g = abs(fract(p) - 0.5);
+      float l = min(g.x, g.y);
+      return smoothstep(0.05, 0.0, l);
+    }
+
+    void main(){
+      vec2 uv = vUV;
+
+      float t = u_time * 0.4;
+      vec2 center = vec2(0.5) + 0.1 * vec2(sin(t*0.7), cos(t*0.9));
+
+      vec2 p = uv;
+      p += 0.08 * vec2(
+        noise(uv*6.0 + t*0.8),
+        noise(uv*6.0 - t*0.6)
+      );
+
+      vec2 gridCoord = p * 10.0;
+      float wires = lineGrid(gridCoord);
+
+      float signal = noise(gridCoord * 0.6 + t * 2.0);
+      float pulse = smoothstep(0.6, 1.0, signal);
+
+      vec2 diff = uv - center;
+      float radial = exp(-length(diff) * 8.0);
+
+      vec3 dark = vec3(0.02, 0.0, 0.06);
+      vec3 mid  = vec3(0.15, 0.0, 0.25);
+      vec3 glowA = vec3(0.7, 0.2, 1.0);
+      vec3 glowB = vec3(0.0, 0.9, 1.0);
+
+      vec3 color = mix(dark, mid, uv.y + 0.1);
+
+      vec3 wireColor = mix(glowA, glowB, uv.y + 0.3);
+      color += wireColor * wires * 0.7;
+
+      color += (glowA * 0.8 + glowB * 0.2) * radial * pulse;
+
+      float flicker = 0.03 * sin(u_time * 30.0 + noise(uv*50.0) * 20.0);
+      color += flicker;
+
+      float vignette = smoothstep(1.1, 0.4, length(uv - 0.5));
+      color *= vignette;
+
+      color = pow(color, vec3(0.9));
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+
+  function compile(type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+  const pos = gl.getAttribLocation(program, 'position');
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(pos);
+
+  const timeLoc = gl.getUniformLocation(program, 'u_time');
+
+  function render(time){
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.uniform1f(timeLoc, time * 0.001);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+})();
+</script>
+
+
+---
+## Stage 1 · Canvas & Context
+- create the `<canvas>` and grab a `webgl` context once per slide load
+- keep a 2D fallback so browsers that disable WebGL still show a message
+
+```js
+const canvas = document.getElementById('test-canvas');
+const gl = canvas.getContext('webgl');
+if (!gl) {
+  canvas.getContext('2d').fillText('WebGL not supported', 12, 40);
+  throw new Error('No WebGL context');
+}
+```
+
+<div style="display:flex;justify-content:center;">
+  <canvas id="webgl-stage-1" width="400" height="260" style="width:80%;max-width:520px;aspect-ratio:4/3;border-radius:10px;background:#06070f;box-shadow:0 8px 20px rgba(0,0,0,0.55);"></canvas>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('webgl-stage-1');
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+  gl.clearColor(0.05, 0.05, 0.08, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+})();
+</script>
+
+---
+## Stage 2 · Shader Program
+- inline GLSL strings describe how vertices transform and how fragments shade
+- compile each string, link them into a program, and call `gl.useProgram(program)`
+- still no geometry bound, so the canvas stays clear but the program is ready
+
+```js
+const vsSource = `
+  attribute vec2 position;
+  attribute vec3 color;
+  varying vec3 vColor;
+  void main(){
+    gl_Position = vec4(position, 0.0, 1.0);
+    vColor = color;
+  }
+`;
+
+const fsSource = `
+  precision mediump float;
+  varying vec3 vColor;
+  void main(){ gl_FragColor = vec4(vColor, 1.0); }
+`;
+
+function createShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    throw new Error(gl.getShaderInfoLog(shader));
+  }
+  return shader;
+}
+
+const program = gl.createProgram();
+gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vsSource));
+gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fsSource));
+gl.linkProgram(program);
+gl.useProgram(program);
+```
+
+<div style="display:flex;justify-content:center;">
+  <canvas id="webgl-stage-2" width="400" height="260" style="width:80%;max-width:520px;aspect-ratio:4/3;border-radius:10px;background:#06070f;box-shadow:0 8px 20px rgba(0,0,0,0.55);"></canvas>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('webgl-stage-2');
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const vsSource = `attribute vec2 position; attribute vec3 color; varying vec3 vColor; void main(){ gl_Position = vec4(position, 0.0, 1.0); vColor = color; }`;
+  const fsSource = `precision mediump float; varying vec3 vColor; void main(){ gl_FragColor = vec4(vColor, 1.0); }`;
+  function createShader(type, source){
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if(!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return null;
+    return shader;
+  }
+  const vs = createShader(gl.VERTEX_SHADER, vsSource);
+  const fs = createShader(gl.FRAGMENT_SHADER, fsSource);
+  if(!vs || !fs) return;
+  const program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  if(!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
+  gl.clearColor(0.04, 0.04, 0.08, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+})();
+</script>
+
+---
+## Stage 3 · Vertex Buffers & Draw Call
+- push an interleaved array (xy + rgb) to GPU memory, then describe the layout
+- connect those attributes to the shader via `gl.vertexAttribPointer`
+- issue one `gl.drawArrays` to render a static rainbow triangle
+
+```js
+const vertices = new Float32Array([
+   0.0,  0.8,  1.0, 0.0, 0.0,
+  -0.7, -0.6,  0.0, 1.0, 0.0,
+   0.7, -0.6,  0.0, 0.0, 1.0,
+]);
+
+const buffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+const stride = 5 * 4; // five floats per vertex
+gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, stride, 0);
+gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, stride, 8);
+gl.enableVertexAttribArray(positionLoc);
+gl.enableVertexAttribArray(colorLoc);
+
+gl.clearColor(0.08, 0.08, 0.12, 1.0);
+gl.clear(gl.COLOR_BUFFER_BIT);
+gl.drawArrays(gl.TRIANGLES, 0, 3);
+```
+
+<div style="display:flex;justify-content:center;">
+  <canvas id="webgl-stage-3" width="400" height="260" style="width:80%;max-width:520px;aspect-ratio:4/3;border-radius:10px;background:#06070f;box-shadow:0 8px 20px rgba(0,0,0,0.55);"></canvas>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('webgl-stage-3');
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const vsSource = `attribute vec2 position; attribute vec3 color; varying vec3 vColor; void main(){ gl_Position = vec4(position, 0.0, 1.0); vColor = color; }`;
+  const fsSource = `precision mediump float; varying vec3 vColor; void main(){ gl_FragColor = vec4(vColor, 1.0); }`;
+  function compile(type, src){ const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; }
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vsSource));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fsSource));
+  gl.linkProgram(program);
+  if(!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
+  gl.useProgram(program);
+
+  const vertices = new Float32Array([
+     0.0,  0.8,  1.0, 0.0, 0.0,
+    -0.7, -0.6,  0.0, 1.0, 0.0,
+     0.7, -0.6,  0.0, 0.0, 1.0,
+  ]);
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+  const positionLoc = gl.getAttribLocation(program, 'position');
+  const colorLoc = gl.getAttribLocation(program, 'color');
+  const stride = 5 * 4;
+  gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, stride, 0);
+  gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, stride, 8);
+  gl.enableVertexAttribArray(positionLoc);
+  gl.enableVertexAttribArray(colorLoc);
+
+  gl.clearColor(0.08, 0.08, 0.12, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+})();
+</script>
+
+---
+## Stage 4 · Animate & Re-upload
+- wrap the draw call in `requestAnimationFrame` so GPU work matches the display refresh
+- rebuild the vertex data each frame to modulate colors with time-based sine waves
+- call `gl.bufferData` with `gl.DYNAMIC_DRAW` so drivers optimize for frequent uploads
+
+```js
+let time = 0;
+function animate(){
+  time += 0.02;
+  const animatedVertices = new Float32Array([
+     0.0,  0.8,  Math.abs(Math.sin(time)), Math.abs(Math.sin(time + 2.0)), Math.abs(Math.sin(time + 4.0)),
+    -0.7, -0.6,  Math.abs(Math.sin(time + 1.0)), Math.abs(Math.sin(time + 3.0)), Math.abs(Math.sin(time + 5.0)),
+     0.7, -0.6,  Math.abs(Math.sin(time + 2.0)), Math.abs(Math.sin(time + 4.0)), Math.abs(Math.sin(time)),
+  ]);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, animatedVertices, gl.DYNAMIC_DRAW);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+```
+
+<div style="display:flex;justify-content:center;">
+  <canvas id="webgl-stage-4" width="400" height="260" style="width:80%;max-width:520px;aspect-ratio:4/3;border-radius:10px;background:#06070f;box-shadow:0 8px 20px rgba(0,0,0,0.55);"></canvas>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('webgl-stage-4');
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const vsSource = `attribute vec2 position; attribute vec3 color; varying vec3 vColor; void main(){ gl_Position = vec4(position, 0.0, 1.0); vColor = color; }`;
+  const fsSource = `precision mediump float; varying vec3 vColor; void main(){ gl_FragColor = vec4(vColor, 1.0); }`;
+  function compile(type, src){ const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; }
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vsSource));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fsSource));
+  gl.linkProgram(program);
+  if(!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
+  gl.useProgram(program);
+
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+  const positionLoc = gl.getAttribLocation(program, 'position');
+  const colorLoc = gl.getAttribLocation(program, 'color');
+  const stride = 5 * 4;
+  gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, stride, 0);
+  gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, stride, 8);
+  gl.enableVertexAttribArray(positionLoc);
+  gl.enableVertexAttribArray(colorLoc);
+
+  gl.clearColor(0.1, 0.1, 0.12, 1.0);
+
+  let time = 0;
+  function animate(){
+    time += 0.02;
+    const animatedVertices = new Float32Array([
+       0.0,  0.8,  Math.abs(Math.sin(time)), Math.abs(Math.sin(time + 2.0)), Math.abs(Math.sin(time + 4.0)),
+      -0.7, -0.6,  Math.abs(Math.sin(time + 1.0)), Math.abs(Math.sin(time + 3.0)), Math.abs(Math.sin(time + 5.0)),
+       0.7, -0.6,  Math.abs(Math.sin(time + 2.0)), Math.abs(Math.sin(time + 4.0)), Math.abs(Math.sin(time)),
+    ]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, animatedVertices, gl.DYNAMIC_DRAW);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    requestAnimationFrame(animate);
+  }
+  requestAnimationFrame(animate);
+})();
+</script>
 
 ---
 ## WebGL In Action
